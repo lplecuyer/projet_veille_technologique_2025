@@ -1,0 +1,8 @@
+*.rbxm
+*.rbxmx
+*.rbxl
+*.rbxlx
+*.lock
+build/
+.idea/
+.vscode/
