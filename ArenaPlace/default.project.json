@@ -2,10 +2,6 @@
   "name": "project",
   "tree": {
     "$className": "DataModel",
-    "ReplicatedStorage": {
-      "$className": "ReplicatedStorage",
-      "$path": "src/ReplicatedStorage"
-    },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
