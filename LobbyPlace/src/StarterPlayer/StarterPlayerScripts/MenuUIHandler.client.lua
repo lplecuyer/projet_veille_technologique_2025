@@ -17,6 +17,7 @@ local backBtn = classSelection:WaitForChild("BackButton")
 local selectClassBtn = classSelection:WaitForChild("SelectClassButton")
 
 local errorLabel = gui:WaitForChild("ErrorLabel")
+local selectedClassLabel = mainMenu:WaitForChild("SelectedClassLabel")
 
 local selectedClass = nil
 local confirmedClass = nil
@@ -102,11 +103,13 @@ end)
 
 knightBtn.MouseButton1Click:Connect(function()
 	selectedClass = "Knight"
+	selectedClassLabel.Text = "Selected class : Knight"
 	updateButtonBorders()
 end)
 
 rogueBtn.MouseButton1Click:Connect(function()
 	selectedClass = "Rogue"
+	selectedClassLabel.Text = "Selected class : Rogue"
 	updateButtonBorders()
 end)
 
@@ -121,7 +124,10 @@ selectClassBtn.MouseButton1Click:Connect(function()
 end)
 
 startButton.MouseButton1Click:Connect(function()
+	print("test")
 	if confirmedClass then
+		print("test2")
+		print(confirmedClass)
 		ReplicatedStorage:WaitForChild("StartMatch"):FireServer(confirmedClass)
 	else
 		showError("You must choose a class")
