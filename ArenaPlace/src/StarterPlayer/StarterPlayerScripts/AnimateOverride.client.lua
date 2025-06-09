@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
@@ -10,12 +11,11 @@ local humanoid = char:WaitForChild("Humanoid")
 local remote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("MovementRequest")
 local dashRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("DashRequest")
 local attackRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("AttackRequest")
+local parryRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ParryRequest") -- 🛡️ AJOUTÉ
 
 local currentState = "Idle"
 
-local UserInputService = game:GetService("UserInputService")
-
-
+-- 🔁 ATTAQUE (Clic gauche)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -23,6 +23,15 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 end)
 
+-- 🛡️ PARRY (Clic droit)
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		parryRemote:FireServer() -- pas besoin d'envoyer `player`, le serveur le reçoit automatiquement
+	end
+end)
+
+-- 💨 DASH (Touche Q)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed or input.KeyCode ~= Enum.KeyCode.Q then return end
 	if not hrp then return end
@@ -30,28 +39,19 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	local moveDir = humanoid.MoveDirection
 	if moveDir.Magnitude == 0 then return end
 
-	-- Convertir en repère local du joueur
 	local localMoveDir = hrp.CFrame:VectorToObjectSpace(moveDir)
-
 	local direction
+
 	if math.abs(localMoveDir.X) > math.abs(localMoveDir.Z) then
-		if localMoveDir.X > 0 then
-			direction = "Right"
-		else
-			direction = "Left"
-		end
+		direction = localMoveDir.X > 0 and "Right" or "Left"
 	else
-		if localMoveDir.Z > 0 then
-			direction = "Back"
-		else
-			direction = "Front"
-		end
+		direction = localMoveDir.Z > 0 and "Back" or "Front"
 	end
 
 	dashRemote:FireServer(direction)
 end)
 
-
+-- 🚶‍♂️ IDLE / WALK Animation Sync
 RunService.RenderStepped:Connect(function()
 	if not hrp then return end
 
@@ -67,11 +67,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-
-
-
--- Footsteps & jump
-
+-- 🚫 DÉSACTIVATION DU JUMP
 local function disableJump()
 	humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
 	humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
