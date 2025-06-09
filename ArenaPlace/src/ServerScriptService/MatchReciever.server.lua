@@ -9,6 +9,8 @@ Players.CharacterAutoLoads = false
 
 local classRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ClassAssignmentRequest")
 
+local spawnCounter = 1
+
 -- Fonction pour souder un modèle
 local function weldModel(model)
 	print("[weldModel] Welding model:", model.Name)
@@ -39,7 +41,6 @@ end
 
 -- Fonction principale
 local function setupPlayerClass(player, className)
-	print("[setupPlayerClass] Setting up class for", player.Name, "→", className)
 
 	player:SetAttribute("Class", className)
 
@@ -65,13 +66,23 @@ local function setupPlayerClass(player, className)
 	if not humanoid or not hrp then return end
 
 	local spawnsFolder = workspace:FindFirstChild("ArenaSpawns")
-	local spawnName = "Spawn" .. tostring(#Players:GetPlayers())
+	local spawnName = "Spawn" .. tostring(spawnCounter)
 	local spawnPart = spawnsFolder and spawnsFolder:FindFirstChild(spawnName)
 	local spawnCFrame = spawnPart and spawnPart.CFrame or CFrame.new(0, 5, 0)
+	print(spawnName)
+	spawnCounter += 1
 
-	print("[setupPlayerClass] Spawn:", spawnName, "→", spawnCFrame.Position)
+	-- Détermination du numéro du joueur
+	local playersInArena = Players:GetPlayers()
+	local isPlayer1 = playersInArena[1] == player
+	local rotationY = isPlayer1 and 90 or -90
 
-	clone:SetPrimaryPartCFrame(spawnCFrame + Vector3.new(0, 3, 0))
+	-- Appliquer la rotation sur Y
+	local rotatedCFrame = spawnCFrame + Vector3.new(0, 3, 0)
+	rotatedCFrame = rotatedCFrame * CFrame.Angles(0, math.rad(rotationY), 0)
+
+	clone:SetPrimaryPartCFrame(rotatedCFrame)
+
 
 	-- Knight special shield
 	if className == "Knight" then
