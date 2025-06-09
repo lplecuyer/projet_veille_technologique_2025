@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
@@ -11,9 +12,23 @@ local humanoid = char:WaitForChild("Humanoid")
 local remote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("MovementRequest")
 local dashRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("DashRequest")
 local attackRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("AttackRequest")
-local parryRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ParryRequest") -- 🛡️ AJOUTÉ
+local parryRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ParryRequest")
+local charLoadedRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CharacterLoaded")
 
 local currentState = "Idle"
+
+charLoadedRemote.OnClientEvent:Connect(function(character)
+	local player = Players.LocalPlayer
+	if player then
+		player.Character = character
+		workspace.CurrentCamera.CameraSubject = character:FindFirstChild("Humanoid") or character:FindFirstChildWhichIsA("Humanoid")
+	end
+end)
+
+player.CharacterAdded:Connect(function(char)
+	local humanoid = char:WaitForChild("Humanoid")
+	Workspace.CurrentCamera.CameraSubject = humanoid
+end)
 
 -- 🔁 ATTAQUE (Clic gauche)
 UserInputService.InputBegan:Connect(function(input, processed)

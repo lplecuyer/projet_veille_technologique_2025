@@ -18,6 +18,7 @@ local comboState = {}
 local isAttacking = {} -- état d'attaque actif par joueur
 local isLocked = {} -- pour lock temporairement un joueur durant un parry ou etre parried
 local isParrying = {}
+local isInvincible = {}
 
 local DAMAGE_PER_HIT = 10
 local CollectionService = game:GetService("CollectionService") -- pour taguer les armes
@@ -117,6 +118,12 @@ local function connectHitbox(player, weaponModel, duration, step)
 
 		local targetPlayer = Players:GetPlayerFromCharacter(targetChar)
 		if not targetPlayer then return end
+
+		if isInvincible[targetPlayer] then
+			print(targetPlayer.Name .. " a esquivé grâce à i-frames")
+			return
+		end
+
 
 		if alreadyHit[humanoid] then return end
 		alreadyHit[humanoid] = true
@@ -311,14 +318,19 @@ dashRemote.OnServerEvent:Connect(function(player, direction)
 	end
 	lastDashTimes[player] = now
 
-	print("[Dash] Direction:", direction)
-
 	local char = player.Character
 	if not char then return end
 
 	local hum = char:FindFirstChild("Humanoid")
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hum or not hrp then return end
+
+	isInvincible[player] = true
+
+	task.delay(DASH_DURATION, function()
+		isInvincible[player] = false
+	end)
+
 
 	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
 		if track.Animation.Name:match("^Dash") then

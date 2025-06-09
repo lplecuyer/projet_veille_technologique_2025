@@ -124,10 +124,7 @@ selectClassBtn.MouseButton1Click:Connect(function()
 end)
 
 startButton.MouseButton1Click:Connect(function()
-	print("test")
 	if confirmedClass then
-		print("test2")
-		print(confirmedClass)
 		ReplicatedStorage:WaitForChild("StartMatch"):FireServer(confirmedClass)
 	else
 		showError("You must choose a class")

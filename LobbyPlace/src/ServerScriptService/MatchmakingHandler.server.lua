@@ -49,21 +49,21 @@ StartMatch.OnServerEvent:Connect(function(player, selectedClass)
 		waitingPlayers[player] = nil
 		waitingPlayers[otherPlayer] = nil
 
-		local teleportData = {
+		local TeleportData = {
 			Players = {
-				[player.UserId] = class1,
-				[otherPlayer.UserId] = class2
+				[tostring(player.UserId)] = class1,
+				[tostring(otherPlayer.UserId)] = class2
 			}
 		}
+
 
 		local success, err = pcall(function()
 			TeleportService:TeleportPartyAsync(
 				ARENA_PLACE_ID,
 				{player, otherPlayer},
-				teleportData
+				TeleportData
 			)
 		end)
-
 
 		if success then
 			print("[Matchmaking] Téléportation lancée !")
