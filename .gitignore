@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 *.rbxm
 *.rbxmx
 *.rbxl
@@ -6,3 +7,11 @@
 build/
 .idea/
 .vscode/
+=======
+# Project place file
+/School project.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+>>>>>>> 602dbb81cb14a5a026031ceb47dcfca2be7ac919
