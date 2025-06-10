@@ -20,8 +20,6 @@ local isLocked = {} -- pour lock temporairement un joueur durant un parry ou etr
 local isParrying = {}
 local isInvincible = {}
 
-local DAMAGE_PER_HIT = 10
-local CollectionService = game:GetService("CollectionService") -- pour taguer les armes
 
 local function stopAllAnimations(humanoid)
 	for _, track in pairs(humanoid:GetPlayingAnimationTracks()) do
@@ -64,17 +62,14 @@ local function stunPlayer(player, humanoid)
 
 	-- Désactive le mouvement
 	local oldWalkSpeed = humanoid.WalkSpeed
-	local oldJumpPower = humanoid.JumpPower
 
 	humanoid.WalkSpeed = 0
-	humanoid.JumpPower = 0
 
 	task.delay(2.25, function()
 		isLocked[player] = false
 		isAttacking[player] = false
 
 		humanoid.WalkSpeed = oldWalkSpeed
-		humanoid.JumpPower = oldJumpPower
 
 		-- Rejoue anim selon s'il bouge
 		if humanoid.MoveDirection.Magnitude > 0.1 then
