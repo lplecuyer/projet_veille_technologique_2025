@@ -50,13 +50,6 @@ cameraRemote.OnClientEvent:Connect(function(opponentName)
 		end
 	end
 
-	-- Retour à mon perso
-	cinematicTween(
-		myHRP.Position + Vector3.new(xOffset, 5, 0),
-		myHRP.Position + Vector3.new(xOffset, 3, 0),
-		myHRP
-	)
-
 	task.wait(0.5)
 
 	cam.CameraType = Enum.CameraType.Custom
