@@ -4,6 +4,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local gui = player:WaitForChild("PlayerGui"):WaitForChild("MenuGui")
 
+local StartMatch = ReplicatedStorage:WaitForChild("StartMatch")
+local ViewportModels = ReplicatedStorage:WaitForChild("ViewportModels")
+
 -- UI elements
 local mainMenu = gui:WaitForChild("MainMenu")
 local classSelection = gui:WaitForChild("ClassSelection")
@@ -21,18 +24,19 @@ local selectedClassLabel = mainMenu:WaitForChild("SelectedClassLabel")
 
 local selectedClass = nil
 local confirmedClass = nil
+local isSearching = false
 
 -- === FONCTION POUR AFFICHER UN MODELE DANS UN VIEWPORTFRAME ===
 local function setupViewport(viewportFrame, modelName, angleOffset)
 	local worldModel = Instance.new("WorldModel")
 	worldModel.Parent = viewportFrame
 
-	local model = ReplicatedStorage:WaitForChild("ViewportModels"):WaitForChild(modelName):Clone()
-	model:SetPrimaryPartCFrame(CFrame.new(0, 0, 0) * CFrame.Angles(0, math.rad(angleOffset or 0), 0))
+	local model = ViewportModels:WaitForChild(modelName):Clone()
+	model:PivotTo(CFrame.Angles(0, math.rad(angleOffset or 0), 0))
 	model.Parent = worldModel
 
 	local camera = Instance.new("Camera")
-	camera.CFrame = CFrame.new(Vector3.new(0, 2, -5), Vector3.new(0, 1.5, 0))
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 2, -5), Vector3.new(0, 1.5, 0))
 	camera.Parent = viewportFrame
 	viewportFrame.CurrentCamera = camera
 end
@@ -43,22 +47,22 @@ setupViewport(rogueBtn:WaitForChild("RogueViewport"), "Rogue", 15)
 
 -- === AFFICHER LE DECOR PRINCIPAL (BattleViewport) ===
 do
-	local viewport = gui.MainMenu:WaitForChild("BattleViewport")
+	local viewport = mainMenu:WaitForChild("BattleViewport")
 
 	local world = Instance.new("WorldModel")
 	world.Parent = viewport
 
-	local knightModel = ReplicatedStorage:WaitForChild("ViewportModels"):WaitForChild("Knight"):Clone()
-	local rogueModel = ReplicatedStorage:WaitForChild("ViewportModels"):WaitForChild("Rogue"):Clone()
+	local knightModel = ViewportModels:WaitForChild("Knight"):Clone()
+	local rogueModel = ViewportModels:WaitForChild("Rogue"):Clone()
 
-	knightModel:SetPrimaryPartCFrame(CFrame.new(5, 0, 0) * CFrame.Angles(0, math.rad(90), 0))
-	rogueModel:SetPrimaryPartCFrame(CFrame.new(-5, 0, 0) * CFrame.Angles(0, math.rad(-90), 0))
+	knightModel:PivotTo(CFrame.new(5, 0, 0) * CFrame.Angles(0, math.rad(90), 0))
+	rogueModel:PivotTo(CFrame.new(-5, 0, 0) * CFrame.Angles(0, math.rad(-90), 0))
 
 	knightModel.Parent = world
 	rogueModel.Parent = world
 
 	local camera = Instance.new("Camera")
-	camera.CFrame = CFrame.new(Vector3.new(0, 3, -6.5), Vector3.new(0, 1.5, 0))
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 3, -6.5), Vector3.new(0, 1.5, 0))
 	camera.Parent = viewport
 	viewport.CurrentCamera = camera
 end
@@ -68,30 +72,34 @@ local knightStroke = knightBtn:WaitForChild("UIStroke")
 local rogueStroke = rogueBtn:WaitForChild("UIStroke")
 
 local function updateButtonBorders()
-	if selectedClass == "Knight" then
-		knightStroke.Transparency = 0
-		rogueStroke.Transparency = 1
-	elseif selectedClass == "Rogue" then
-		rogueStroke.Transparency = 0
-		knightStroke.Transparency = 1
-	else
-		knightStroke.Transparency = 1
-		rogueStroke.Transparency = 1
-	end
+	knightStroke.Transparency = (selectedClass == "Knight") and 0 or 1
+	rogueStroke.Transparency = (selectedClass == "Rogue") and 0 or 1
 end
 
 -- === MESSAGE D’ERREUR ===
+local errorToken = 0
+
 local function showError(text)
+	-- Le token empêche un ancien délai de cacher un message plus récent
+	errorToken += 1
+	local myToken = errorToken
+
 	errorLabel.Text = text
 	errorLabel.Visible = true
-	wait(2)
-	errorLabel.Visible = false
+
+	task.delay(2, function()
+		if errorToken == myToken then
+			errorLabel.Visible = false
+		end
+	end)
 end
 
 -- === UI Events ===
 chooseClassButton.MouseButton1Click:Connect(function()
 	mainMenu.Visible = false
 	classSelection.Visible = true
+	selectedClass = confirmedClass
+	updateButtonBorders()
 end)
 
 backBtn.MouseButton1Click:Connect(function()
@@ -103,13 +111,11 @@ end)
 
 knightBtn.MouseButton1Click:Connect(function()
 	selectedClass = "Knight"
-	selectedClassLabel.Text = "Selected class : Knight"
 	updateButtonBorders()
 end)
 
 rogueBtn.MouseButton1Click:Connect(function()
 	selectedClass = "Rogue"
-	selectedClassLabel.Text = "Selected class : Rogue"
 	updateButtonBorders()
 end)
 
@@ -119,14 +125,21 @@ selectClassBtn.MouseButton1Click:Connect(function()
 		return
 	end
 	confirmedClass = selectedClass
+	selectedClassLabel.Text = "Selected class : " .. confirmedClass
 	mainMenu.Visible = true
 	classSelection.Visible = false
 end)
 
 startButton.MouseButton1Click:Connect(function()
-	if confirmedClass then
-		ReplicatedStorage:WaitForChild("StartMatch"):FireServer(confirmedClass)
-	else
+	if not confirmedClass then
 		showError("You must choose a class")
+		return
 	end
+	if isSearching then
+		return
+	end
+
+	isSearching = true
+	selectedClassLabel.Text = "Searching for an opponent..."
+	StartMatch:FireServer(confirmedClass)
 end)

@@ -1,19 +1,21 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local cameraRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("StartCinematic")
-local unlockRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("UnlockMovement")
-
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local cameraRemote = RemoteEvents:WaitForChild("StartCinematic")
+local unlockRemote = RemoteEvents:WaitForChild("UnlockMovement")
+
 local player = Players.LocalPlayer
 local cam = workspace.CurrentCamera
 
 -- Tween util
 local function cinematicTween(startPos, endPos, lookAt)
 	cam.CameraType = Enum.CameraType.Scriptable
-	cam.CFrame = CFrame.new(startPos, lookAt.Position)
+	cam.CFrame = CFrame.lookAt(startPos, lookAt.Position)
 
 	local tweenInfo = TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-	local goal = { CFrame = CFrame.new(endPos, lookAt.Position) }
+	local goal = { CFrame = CFrame.lookAt(endPos, lookAt.Position) }
 
 	local tween = TweenService:Create(cam, tweenInfo, goal)
 	tween:Play()
@@ -21,25 +23,27 @@ local function cinematicTween(startPos, endPos, lookAt)
 end
 
 cameraRemote.OnClientEvent:Connect(function(opponentName)
-	local myChar = player.Character or player.CharacterAdded:Wait()
-	local myHRP = myChar:WaitForChild("HumanoidRootPart")
+	-- pcall : la caméra doit revenir et le mouvement se débloquer même si la cinématique plante
+	local ok, err = pcall(function()
+		local myChar = player.Character or player.CharacterAdded:Wait()
+		local myHRP = myChar:WaitForChild("HumanoidRootPart")
 
-	local isPlayer1 = player.Name < opponentName
-	local xOffset = isPlayer1 and 5 or -5
+		-- Même ordre que les spawns côté serveur (attribut Slot)
+		local isPlayer1 = player:GetAttribute("Slot") == 1
+		local xOffset = isPlayer1 and 5 or -5
 
-	-- Caméra vers mon perso
-	cinematicTween(
-		myHRP.Position + Vector3.new(-xOffset, 0, -2),
-		myHRP.Position + Vector3.new(-xOffset, 0, 2),
-		myHRP
-	)
+		-- Caméra vers mon perso
+		cinematicTween(
+			myHRP.Position + Vector3.new(-xOffset, 0, -2),
+			myHRP.Position + Vector3.new(-xOffset, 0, 2),
+			myHRP
+		)
 
-	task.wait(0.5)
+		task.wait(0.5)
 
-	-- Caméra vers l’adversaire
-	local opponent = Players:FindFirstChild(opponentName)
-	if opponent and opponent.Character then
-		local oppHRP = opponent.Character:FindFirstChild("HumanoidRootPart")
+		-- Caméra vers l’adversaire
+		local opponent = Players:FindFirstChild(opponentName)
+		local oppHRP = opponent and opponent.Character and opponent.Character:FindFirstChild("HumanoidRootPart")
 		if oppHRP then
 			cinematicTween(
 				oppHRP.Position + Vector3.new(xOffset, 0, -2),
@@ -48,11 +52,14 @@ cameraRemote.OnClientEvent:Connect(function(opponentName)
 			)
 			task.wait(0.5)
 		end
-	end
 
-	task.wait(0.5)
+		task.wait(0.5)
+	end)
+
+	if not ok then
+		warn("[Cinematic] Erreur :", err)
+	end
 
 	cam.CameraType = Enum.CameraType.Custom
 	unlockRemote:FireServer()
 end)
-

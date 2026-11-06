@@ -3,7 +3,7 @@ local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 
 -- UIs qu’on veut injecter
-local UINames = { "LivesUI", "WinnerLabelUI" }
+local UINames = { "WinnerLabelUI" }
 
 local function injectUI()
 	local playerGui = player:WaitForChild("PlayerGui")

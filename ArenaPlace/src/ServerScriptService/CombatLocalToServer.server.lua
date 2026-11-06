@@ -1,110 +1,115 @@
+-- Arbitre du combat : le client joue ses animations et son dash lui-même (AnimateOverride),
+-- le serveur valide les requêtes et gère cooldowns, invincibilité, hitboxes, dégâts, parry et stun
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local Debris = game:GetService("Debris")
 
-local remote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("MovementRequest")
-local dashRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("DashRequest")
-local attackRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("AttackRequest")
-local parryRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ParryRequest")
-local Animations = ReplicatedStorage:WaitForChild("Animations")
+local CombatConfig = require(ReplicatedStorage:WaitForChild("CombatConfig"))
 
-local DASH_SPEED = 100
-local DASH_DURATION = 0.2
-local DASH_COOLDOWN = 2
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local dashRemote = RemoteEvents:WaitForChild("DashRequest")
+local attackRemote = RemoteEvents:WaitForChild("AttackRequest")
+local parryRemote = RemoteEvents:WaitForChild("ParryRequest")
+
+-- Créés ici pour ne pas dépendre de Studio
+local function getOrCreateRemote(name)
+	local existing = RemoteEvents:FindFirstChild(name)
+	if existing then
+		return existing
+	end
+	local created = Instance.new("RemoteEvent")
+	created.Name = name
+	created.Parent = RemoteEvents
+	return created
+end
+-- Serveur → clients : un parry a réussi, on affiche les étincelles
+local parryEffectRemote = getOrCreateRemote("ParryEffect")
+-- Client → serveur : l'attaquant a vu son coup frapper un parry de son côté
+local parryHitRemote = getOrCreateRemote("ParryHit")
+
+local COMBO_DAMAGE = { 5, 10, 15 }
+-- Délai max entre deux coups d'un même combo (durée de l'anim + fenêtre de buffer, avec marge)
+local COMBO_MAX_GAP = 2.5
+-- Délai min entre deux coups, contre le spam de requêtes
+local MIN_ATTACK_INTERVAL = 0.2
+-- Marge pour la gigue réseau : deux requêtes peuvent arriver plus rapprochées qu'envoyées
+local LATENCY_TOLERANCE = 0.2
+-- Distance max entre attaquant et cible pour accepter un parry signalé par le client
+local MAX_PARRY_HIT_DISTANCE = 12
 
 local lastDashTimes = {}
-local comboState = {}
+local lastParryTimes = {}
+local lastAttacks = {} -- [player] = { step, time, parried } du dernier coup accepté
 
-local isAttacking = {} -- état d'attaque actif par joueur
 local isLocked = {} -- pour lock temporairement un joueur durant un parry ou etre parried
 local isParrying = {}
 local isInvincible = {}
 
-
-local function stopAllAnimations(humanoid)
-	for _, track in pairs(humanoid:GetPlayingAnimationTracks()) do
-		track:Stop(0.1)
-	end
+-- Vrai si le joueur ne peut pas agir (cinématique, fin de match, mort simulée)
+local function isActionBlocked(player)
+	return workspace:GetAttribute("MatchOver")
+		or player:GetAttribute("MovementLocked")
+		or player:GetAttribute("SimulatedDead")
 end
 
-local function resetCombo(player, humanoid)
-	comboState[player] = nil
-	isAttacking[player] = false
-
-	local idle = Animations:FindFirstChild("Idle")
-	local walk = Animations:FindFirstChild("Walk")
-
-	if humanoid.MoveDirection.Magnitude > 0.1 and walk then
-		local walkTrack = humanoid:LoadAnimation(walk)
-		walkTrack.Looped = true
-		walkTrack:Play()
-	elseif idle then
-		local idleTrack = humanoid:LoadAnimation(idle)
-		idleTrack.Looped = true
-		idleTrack:Play()
-	end
+local function getHumanoid(player)
+	local char = player.Character
+	return char and char:FindFirstChildWhichIsA("Humanoid")
 end
 
-local function stunPlayer(player, humanoid)
-	if isLocked[player] then return end
-
+-- Bloque le joueur pendant `duration`, puis le libère
+local function lockPlayer(player, humanoid, duration, onUnlock)
 	isLocked[player] = true
-	isAttacking[player] = true
-	comboState[player] = nil
+	lastAttacks[player] = nil
 
-	stopAllAnimations(humanoid)
-
-	local stunAnim = Animations:FindFirstChild("Stun")
-	if stunAnim then
-		local track = humanoid:LoadAnimation(stunAnim)
-		track:Play()
-	end
-
-	-- Désactive le mouvement
 	local oldWalkSpeed = humanoid.WalkSpeed
-
 	humanoid.WalkSpeed = 0
 
-	task.delay(2.25, function()
+	task.delay(duration, function()
 		isLocked[player] = false
-		isAttacking[player] = false
+		if onUnlock then
+			onUnlock()
+		end
 
-		humanoid.WalkSpeed = oldWalkSpeed
-
-		-- Rejoue anim selon s'il bouge
-		if humanoid.MoveDirection.Magnitude > 0.1 then
-			local walk = Animations:FindFirstChild("Walk")
-			if walk then
-				local track = humanoid:LoadAnimation(walk)
-				track.Looped = true
-				track:Play()
-			end
-		else
-			local idle = Animations:FindFirstChild("Idle")
-			if idle then
-				local track = humanoid:LoadAnimation(idle)
-				track.Looped = true
-				track:Play()
-			end
+		-- La fin du match a pu bloquer le joueur entre-temps
+		if humanoid.Parent and not workspace:GetAttribute("MatchOver") then
+			humanoid.WalkSpeed = oldWalkSpeed
 		end
 	end)
 end
 
-local function connectHitbox(player, weaponModel, duration, step)
-	local hitbox = weaponModel:FindFirstChild("Hitbox")
-	if not hitbox then return end
+-- L'attribut "Stunned" se réplique : le client joue l'anim de stun de son côté
+-- (l'attaquant l'a souvent déjà prédit en voyant l'attribut "Parrying" de sa cible)
+local function stunPlayer(player, humanoid)
+	if isLocked[player] then return end
 
-	local alreadyHit = {}
-	local connection
+	player:SetAttribute("Stunned", true)
+	lockPlayer(player, humanoid, CombatConfig.STUN_DURATION, function()
+		player:SetAttribute("Stunned", false)
+	end)
+end
 
-	local damage = 5
-	if step == 2 then
-		damage = 10
-	elseif step == 3 then
-		damage = 15
+-- Parry réussi : stun de l'attaquant et étincelles chez tout le monde, une seule fois par coup
+local function resolveParry(attacker, attack, position)
+	if attack.parried then return end
+	attack.parried = true
+
+	local attackerHumanoid = getHumanoid(attacker)
+	if attackerHumanoid then
+		stunPlayer(attacker, attackerHumanoid)
 	end
+	parryEffectRemote:FireAllClients(attacker, position)
+end
 
-	connection = hitbox.Touched:Connect(function(part)
+local function connectHitboxes(player, step, attack)
+	local char = player.Character
+	local weaponNames = CombatConfig.ATTACK_WEAPONS[player:GetAttribute("Class")]
+	if not char or not weaponNames then return end
+
+	local damage = COMBO_DAMAGE[step] or COMBO_DAMAGE[1]
+	local alreadyHit = {} -- partagé entre les armes : un seul coup par cible
+	local connections = {}
+
+	local function onTouched(hitbox, part)
 		local targetChar = part:FindFirstAncestorOfClass("Model")
 		if not targetChar or targetChar == player.Character then return end
 
@@ -114,256 +119,132 @@ local function connectHitbox(player, weaponModel, duration, step)
 		local targetPlayer = Players:GetPlayerFromCharacter(targetChar)
 		if not targetPlayer then return end
 
-		if isInvincible[targetPlayer] then
-			print(targetPlayer.Name .. " a esquivé grâce à i-frames")
+		if isInvincible[targetPlayer] or targetPlayer:GetAttribute("IsInvincible") then
 			return
 		end
-
 
 		if alreadyHit[humanoid] then return end
 		alreadyHit[humanoid] = true
 
 		if isParrying[targetPlayer] then
-			-- STUN de l'attaquant (player)
-			local attackerChar = player.Character
-			if attackerChar then
-				local attackerHumanoid = attackerChar:FindFirstChildWhichIsA("Humanoid")
-				if attackerHumanoid then
-					stunPlayer(player, attackerHumanoid)
-				end
-			end
-
-			return -- ne pas infliger de dégâts
+			-- STUN de l'attaquant (player) ; pas de dégâts
+			resolveParry(player, attack, hitbox.Position)
+			return
 		end
+		if attack.parried then return end
 
 		humanoid:TakeDamage(damage)
-
-		-- (optionnel) ajouter un son, effet, etc. ici
-	end)
-
-	-- Arrêter la détection après `duration`
-	task.delay(duration, function()
-		if connection then connection:Disconnect() end
-	end)
-end
-
-
-local function playAttack(player, humanoid, step)
-	local animName = "Hit" .. step
-	local anim = Animations:FindFirstChild(animName)
-	if not anim then return end
-
-	stopAllAnimations(humanoid)
-	local track = humanoid:LoadAnimation(anim)
-
-	isAttacking[player] = true
-
-	track:Play()
-
-	local RightArm = player.Character and player.Character:FindFirstChild("Right Arm")
-	local weapon = RightArm:FindFirstChild("Sword")
-	if weapon then
-		connectHitbox(player, weapon, 0.7, step)
 	end
 
-	comboState[player] = {
-		step = step,
-		buffer = false,
-		canBuffer = false,
-	}
-
-	-- Détermine le bon keyframe selon le step
-	local keyframeName = (step == 1) and "ComboWindow" or (step == 2 and "ComboWindow2") or nil
-	if keyframeName then
-		track:GetMarkerReachedSignal(keyframeName):Connect(function()
-			local state = comboState[player]
-			if not state or state.step ~= step then return end
-
-			state.canBuffer = true
-			task.delay(0.6, function()
-				if comboState[player] == state then
-					if state.buffer then
-						attackRemote:FireServer(player) -- envoie le prochain combo
-					else
-						resetCombo(player, humanoid)
-					end
-				end
-			end)
-		end)
+	for _, weaponName in ipairs(weaponNames) do
+		local weapon = char:FindFirstChild(weaponName, true)
+		local hitbox = weapon and weapon:FindFirstChild("Hitbox", true)
+		if hitbox and hitbox:IsA("BasePart") then
+			table.insert(connections, hitbox.Touched:Connect(function(part)
+				onTouched(hitbox, part)
+			end))
+		end
 	end
 
-	track.Stopped:Connect(function()
-		local state = comboState[player]
-		if state and state.step == step then
-			resetCombo(player, humanoid)
+	-- Arrêter la détection après HITBOX_DURATION
+	task.delay(CombatConfig.HITBOX_DURATION, function()
+		for _, connection in ipairs(connections) do
+			connection:Disconnect()
 		end
 	end)
 end
 
--- Attack
-attackRemote.OnServerEvent:Connect(function(player)
-	local char = player.Character
-	if not char then return end
-
-	local humanoid = char:FindFirstChild("Humanoid")
-	if not humanoid then return end
-
-	if isLocked[player] then return end
-
-	local state = comboState[player]
-
-	if not state then
-		-- Premier coup
-		playAttack(player, humanoid, 1)
-	elseif state.canBuffer then
-		-- Enchaînement combo
-		playAttack(player, humanoid, state.step + 1)
-	else
-		-- Clique trop tôt
-		state.buffer = true
+-- Attack : le client envoie le step du combo qu'il vient de jouer
+attackRemote.OnServerEvent:Connect(function(player, step)
+	if type(step) ~= "number" or step % 1 ~= 0 or step < 1 or step > CombatConfig.MAX_COMBO_STEP then
+		return
 	end
+	if isLocked[player] or isActionBlocked(player) then return end
+
+	local now = os.clock()
+	local last = lastAttacks[player]
+	if last and now - last.time < MIN_ATTACK_INTERVAL then return end
+
+	-- Un step > 1 doit suivre le step précédent du même combo
+	if step > 1 and not (last and last.step == step - 1 and now - last.time <= COMBO_MAX_GAP) then
+		return
+	end
+
+	local attack = { step = step, time = now, parried = false }
+	lastAttacks[player] = attack
+	connectHitboxes(player, step, attack)
+end)
+
+-- L'attaquant a prédit un parry : son anim est coupée chez lui, donc le serveur ne verra
+-- peut-être jamais le contact. On valide ce qu'on peut et on confirme pour tout le monde.
+parryHitRemote.OnServerEvent:Connect(function(player, target, position)
+	if typeof(target) ~= "Instance" or not target:IsA("Player") or target == player then return end
+	if typeof(position) ~= "Vector3" then return end
+	if not isParrying[target] then return end
+
+	local attack = lastAttacks[player]
+	if not attack or os.clock() - attack.time > CombatConfig.HITBOX_DURATION + LATENCY_TOLERANCE then return end
+
+	local attackerRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+	if not (attackerRoot and targetRoot) then return end
+	if (attackerRoot.Position - targetRoot.Position).Magnitude > MAX_PARRY_HIT_DISTANCE then return end
+
+	-- Position venant du client : on la garde seulement si elle est proche des deux joueurs
+	if (position - targetRoot.Position).Magnitude > MAX_PARRY_HIT_DISTANCE then
+		position = (attackerRoot.Position + targetRoot.Position) / 2
+	end
+
+	resolveParry(player, attack, position)
 end)
 
 -- Parry
 parryRemote.OnServerEvent:Connect(function(player)
-	if isLocked[player] then return end
+	if isLocked[player] or isActionBlocked(player) then return end
 
-	local char = player.Character
-	if not char then return end
+	local now = os.clock()
+	local lastParry = lastParryTimes[player]
+	if lastParry and now - lastParry < CombatConfig.PARRY_COOLDOWN - LATENCY_TOLERANCE then
+		return
+	end
 
-	local humanoid = char:FindFirstChild("Humanoid")
+	local humanoid = getHumanoid(player)
 	if not humanoid then return end
 
-	local parryAnim = Animations:FindFirstChild("Parry")
-	if not parryAnim then return end
-
+	lastParryTimes[player] = now
 	isParrying[player] = true
-
-	-- Lock les inputs
-	isLocked[player] = true
-	isAttacking[player] = true
-	comboState[player] = nil
-
-	stopAllAnimations(humanoid)
-
-	-- Sauvegarde des valeurs originales
-	local oldWalkSpeed = humanoid.WalkSpeed
-
-	humanoid.WalkSpeed = 0
-
-	local track = humanoid:LoadAnimation(parryAnim)
-	track:Play()
-
-	task.delay(1.5, function()
-		isLocked[player] = false
-		isAttacking[player] = false
+	-- Attribut répliqué : le client de l'attaquant s'en sert pour prédire le stun
+	player:SetAttribute("Parrying", true)
+	lockPlayer(player, humanoid, CombatConfig.PARRY_DURATION, function()
 		isParrying[player] = false
-
-		-- Restaure les valeurs normales
-		humanoid.WalkSpeed = oldWalkSpeed
-
-		-- Rejoue l'anim selon le mouvement
-		if humanoid.MoveDirection.Magnitude > 0.1 then
-			local walk = Animations:FindFirstChild("Walk")
-			if walk then
-				local walkTrack = humanoid:LoadAnimation(walk)
-				walkTrack.Looped = true
-				walkTrack:Play()
-			end
-		else
-			local idle = Animations:FindFirstChild("Idle")
-			if idle then
-				local idleTrack = humanoid:LoadAnimation(idle)
-				idleTrack.Looped = true
-				idleTrack:Play()
-			end
-		end
+		player:SetAttribute("Parrying", false)
 	end)
 end)
 
-
--- Idle / Walk
-remote.OnServerEvent:Connect(function(player, state)
-	if isAttacking[player] then return end -- Ignore les requêtes de déplacement si en attaque
-	if isLocked[player] then return end
-
-	local char = player.Character
-	if not char then return end
-
-	local hum = char:FindFirstChild("Humanoid")
-	if not hum then return end
-
-	local animObj = Animations:FindFirstChild(state)
-	if animObj then
-		stopAllAnimations(hum)
-		local track = hum:LoadAnimation(animObj)
-		track.Looped = true
-		track:Play()
-	end
-end)
-
-
--- Dash avec cooldown
+-- Dash : le mouvement est appliqué par le client, le serveur gère cooldown et invincibilité
 dashRemote.OnServerEvent:Connect(function(player, direction)
-	if isLocked[player] then return end
+	if type(direction) ~= "string" or not CombatConfig.DASH_DIRECTIONS[direction] then return end
+	if isLocked[player] or isActionBlocked(player) then return end
 
-	local now = tick()
-	if lastDashTimes[player] and now - lastDashTimes[player] < DASH_COOLDOWN then
+	local now = os.clock()
+	local lastDash = lastDashTimes[player]
+	if lastDash and now - lastDash < CombatConfig.DASH_COOLDOWN - LATENCY_TOLERANCE then
 		return
 	end
 	lastDashTimes[player] = now
 
-	local char = player.Character
-	if not char then return end
-
-	local hum = char:FindFirstChild("Humanoid")
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not hum or not hrp then return end
-
 	isInvincible[player] = true
-
-	task.delay(DASH_DURATION, function()
+	task.delay(CombatConfig.DASH_DURATION, function()
 		isInvincible[player] = false
 	end)
-
-
-	for _, track in pairs(hum:GetPlayingAnimationTracks()) do
-		if track.Animation.Name:match("^Dash") then
-			track:Stop(0.1)
-		end
-	end
-
-	local dashAnim = Animations:FindFirstChild("Dash" .. direction)
-	if dashAnim then
-		local track = hum:LoadAnimation(dashAnim)
-		track:Play()
-	end
-
-	local moveDir = Vector3.zero
-	if direction == "Front" then
-		moveDir = hum.MoveDirection
-	elseif direction == "Back" then
-		moveDir = hum.MoveDirection
-	elseif direction == "Left" then
-		moveDir = -hrp.CFrame.RightVector
-	elseif direction == "Right" then
-		moveDir = hrp.CFrame.RightVector
-	end
-
-	if moveDir.Magnitude > 0.1 then
-		local bv = Instance.new("BodyVelocity")
-		bv.Velocity = moveDir.Unit * DASH_SPEED
-		bv.MaxForce = Vector3.new(1, 0, 1) * 500000
-		bv.P = 1250
-		bv.Parent = hrp
-
-		Debris:AddItem(bv, DASH_DURATION)
-	end
 end)
 
 -- Nettoyage
 Players.PlayerRemoving:Connect(function(player)
 	lastDashTimes[player] = nil
-	comboState[player] = nil
-	isAttacking[player] = nil
+	lastParryTimes[player] = nil
+	lastAttacks[player] = nil
+	isLocked[player] = nil
+	isParrying[player] = nil
+	isInvincible[player] = nil
 end)
